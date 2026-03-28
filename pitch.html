@@ -1099,7 +1099,7 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ code, expiry }));
         errorEl.textContent = '';
         successEl.style.display = 'block';
-        successEl.textContent = '✓ 该访问码有效期为7天';
+        successEl.textContent = '✓ Access granted. Valid for 7 days.';
         setTimeout(unlock, 1200);
       } else {
         errorEl.textContent = 'Invalid access code. Please try again.';
