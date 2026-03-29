@@ -822,6 +822,13 @@
       .hero-stats-wrap { padding: 0 32px 48px; }
       .domain-strip { grid-template-columns: 1fr; }
       .domain-card { height: 200px; }
+      /* Terminal: stack viz below text on tablet */
+      .terminal-layout { flex-direction: column; }
+      .terminal-body {
+        flex: none; min-height: 260px; max-height: 320px;
+        border-right: none; border-bottom: 1px solid rgba(79,127,255,0.1);
+      }
+      .terminal-viz { min-height: 220px; }
     }
     @media (max-width: 768px) {
       nav { padding: 0 20px; }
@@ -842,6 +849,9 @@
       .stat-item { min-width: 50%; border-bottom: 1px solid var(--border2); }
       footer { flex-direction: column; align-items: flex-start; }
       .cta-section { padding: 64px 24px; }
+      /* Terminal mobile: smaller heights */
+      .terminal-body { min-height: 220px; max-height: 280px; font-size: 11px; }
+      .terminal-viz { min-height: 180px; }
     }
 
     /* ── SCROLL REVEAL ── */
