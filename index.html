@@ -154,12 +154,22 @@
       margin-left: 8px; font-size: 11px; color: var(--muted);
       font-family: 'SF Mono','Fira Code','Consolas',monospace; letter-spacing: 0.3px;
     }
+    /* ── TERMINAL SPLIT LAYOUT ── */
+    .terminal-layout {
+      display: flex; flex-direction: row; align-items: stretch;
+    }
     .terminal-body {
       padding: 20px 22px; min-height: 380px; max-height: 480px;
-      overflow: hidden;
+      overflow: hidden; flex: 0 0 55%;
+      border-right: 1px solid rgba(79,127,255,0.1);
       font-family: 'SF Mono','Fira Code','Consolas',monospace;
       font-size: 12.5px; line-height: 1.85;
     }
+    .terminal-viz {
+      flex: 1; position: relative; background: #050609; overflow: hidden;
+      min-height: 380px;
+    }
+    #viz-canvas { position: absolute; inset: 0; display: block; }
     .t-line { white-space: pre; }
     .t-line.th   { color: #7c9fff; font-weight: 700; }
     .t-line.def  { color: rgba(160,165,210,0.65); }
@@ -774,7 +784,12 @@
         </div>
         <span class="terminal-title">physmind-agent  ·  physicalflow-runtime</span>
       </div>
-      <div class="terminal-body" id="terminal-body"></div>
+      <div class="terminal-layout">
+        <div class="terminal-body" id="terminal-body"></div>
+        <div class="terminal-viz" id="terminal-viz">
+          <canvas id="viz-canvas"></canvas>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1690,9 +1705,259 @@
     requestAnimationFrame(tick);
   }
 
+  // ── PHYSICS VISUALIZATION (right panel) ──
+  const vizCanvas = document.getElementById('viz-canvas');
+  const vctx = vizCanvas.getContext('2d');
+  let vizRAF = null;
+  const vzS = { bat: { p: 0 }, rob: { trail: [] }, flu: { pts: [] } };
+
+  function sizeViz() {
+    const dpr = window.devicePixelRatio || 1;
+    const r = vizCanvas.parentElement.getBoundingClientRect();
+    vizCanvas.width  = Math.round(r.width  * dpr);
+    vizCanvas.height = Math.round(r.height * dpr);
+  }
+
+  function startViz(n) {
+    if (vizRAF) { cancelAnimationFrame(vizRAF); vizRAF = null; }
+    sizeViz();
+    if (n === 0) vzS.bat.p = 0;
+    if (n === 1) vzS.rob.trail = [];
+    if (n === 2) vzS.flu.pts = [];
+    function loop(ts) {
+      vizRAF = requestAnimationFrame(loop);
+      const dpr = window.devicePixelRatio || 1;
+      const W = vizCanvas.width / dpr, H = vizCanvas.height / dpr;
+      vctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      vctx.clearRect(0, 0, W, H);
+      if (n === 0) drawBattery(ts, W, H);
+      else if (n === 1) drawRobot(ts, W, H);
+      else drawFluid(ts, W, H);
+    }
+    vizRAF = requestAnimationFrame(loop);
+  }
+
+  function tClr(t, a) {
+    let r, g, b;
+    if (t < 0.35) { const s=t/0.35; r=40+s*20|0; g=80+s*130|0; b=220-s*80|0; }
+    else if (t < 0.65) { const s=(t-0.35)/0.3; r=60+s*180|0; g=210-s*110|0; b=140-s*100|0; }
+    else { const s=(t-0.65)/0.35; r=240; g=100-s*80|0; b=20; }
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  /* ── Case 1: Battery Thermal Map ── */
+  function drawBattery(ts, W, H) {
+    const C=8, R=12, px=14, py=22, legH=18;
+    const cW=(W-px*2)/C, cH=(H-py-legH)/R;
+    vctx.fillStyle='rgba(107,109,154,0.65)';
+    vctx.font='9px "SF Mono",Consolas,monospace';
+    vctx.fillText('THERMAL MAP  ·  96-CELL NMC PACK', px, 13);
+
+    vzS.bat.p = Math.min(1, vzS.bat.p + 0.0035);
+    const scanned = Math.floor(vzS.bat.p * C * R);
+    const hot = { 6:{t:31.4}, 18:{t:33.7} };
+
+    for (let i=0; i<C*R; i++) {
+      const r=Math.floor(i/C), c=i%C;
+      const x=px+c*cW, y=py+r*cH;
+      const sc = i < scanned;
+      const base = 21 + Math.sin(i*2.3+7.1)*1.4 + Math.cos(i*1.7)*0.8;
+      let tmp = base, alpha = sc ? 0.82 : 0.08;
+      if (hot[i] && sc) {
+        const prog = Math.min(1,(scanned-i)/12);
+        tmp = base + (hot[i].t-21)*prog + Math.sin(ts*0.002+i)*0.5;
+      }
+      vctx.fillStyle = tClr(Math.max(0,Math.min(1,(tmp-20)/16)), alpha);
+      vctx.beginPath();
+      if (vctx.roundRect) vctx.roundRect(x+1.5,y+1.5,cW-3,cH-3,2);
+      else vctx.rect(x+1.5,y+1.5,cW-3,cH-3);
+      vctx.fill();
+      if (hot[i] && sc) {
+        const prog = Math.min(1,(scanned-i)/8);
+        const pulse = 0.5+0.5*Math.sin(ts*0.003+i*1.2);
+        vctx.shadowColor = tmp>32 ? '#ff4420' : '#ff8830';
+        vctx.shadowBlur = (10+pulse*10)*prog;
+        vctx.fill();
+        vctx.shadowBlur = 0;
+        if (prog > 0.4) {
+          const fsz = Math.floor(Math.min(cW,cH)*0.45);
+          vctx.fillStyle = `rgba(255,120,40,${0.95*prog})`;
+          vctx.font = `${fsz}px sans-serif`;
+          vctx.textAlign = 'center';
+          vctx.fillText('⚠', x+cW/2, y+cH/2+fsz*0.32);
+          vctx.font = '9px "SF Mono",Consolas,monospace';
+          vctx.textAlign = 'left';
+        }
+      }
+    }
+    if (vzS.bat.p < 1) {
+      const sy = py + (scanned/C)*cH;
+      vctx.fillStyle='rgba(79,127,255,0.5)'; vctx.fillRect(px,sy,W-px*2,1.5);
+      vctx.fillStyle='rgba(79,127,255,0.1)'; vctx.fillRect(px,sy-5,W-px*2,5);
+    }
+    const lw=W-px*2, ly=H-5;
+    const gl=vctx.createLinearGradient(px,0,px+lw,0);
+    gl.addColorStop(0,'rgba(40,80,220,0.7)'); gl.addColorStop(0.35,'rgba(30,180,100,0.7)');
+    gl.addColorStop(0.65,'rgba(240,160,20,0.7)'); gl.addColorStop(1,'rgba(255,40,20,0.7)');
+    vctx.fillStyle=gl; vctx.fillRect(px,ly-5,lw,4);
+    vctx.fillStyle='rgba(107,109,154,0.6)'; vctx.font='8px "SF Mono",Consolas,monospace';
+    vctx.fillText('20°C',px,ly+5);
+    vctx.textAlign='right'; vctx.fillText('36°C',px+lw,ly+5); vctx.textAlign='left';
+  }
+
+  /* ── Case 2: Robot Arm Kinematics ── */
+  function drawRobot(ts, W, H) {
+    // Subtle grid
+    vctx.strokeStyle='rgba(35,40,72,0.6)'; vctx.lineWidth=0.5;
+    for (let gx=0; gx<W; gx+=20) { vctx.beginPath(); vctx.moveTo(gx,18); vctx.lineTo(gx,H-22); vctx.stroke(); }
+    for (let gy=18; gy<H-22; gy+=20) { vctx.beginPath(); vctx.moveTo(0,gy); vctx.lineTo(W,gy); vctx.stroke(); }
+
+    vctx.fillStyle='rgba(107,109,154,0.65)';
+    vctx.font='9px "SF Mono",Consolas,monospace';
+    vctx.fillText('KINEMATIC MODEL  ·  6-DOF URDF v2.4', 14, 13);
+
+    const bx=W/2, by=H-28;
+    const LS=[H*0.23,H*0.19,H*0.15,H*0.1];
+    const t=ts*0.0006;
+    const angs=[
+      -Math.PI/2 + Math.sin(t*0.8)*0.28,
+      -0.35 + Math.sin(t*1.1+1)*0.22,
+      0.25 + Math.sin(t*0.9+2)*0.2,
+      -0.15 + Math.sin(t*1.3+3)*0.15,
+    ];
+    let pts=[{x:bx,y:by}], ca=0;
+    for (let i=0;i<angs.length;i++) {
+      ca+=angs[i];
+      const p=pts[pts.length-1];
+      pts.push({x:p.x+Math.cos(ca)*LS[i], y:p.y+Math.sin(ca)*LS[i]});
+    }
+    const ee=pts[pts.length-1];
+    vzS.rob.trail.push({x:ee.x,y:ee.y});
+    if (vzS.rob.trail.length>90) vzS.rob.trail.shift();
+
+    if (vzS.rob.trail.length>2) {
+      for (let i=1;i<vzS.rob.trail.length;i++) {
+        const a=vzS.rob.trail[i-1], b=vzS.rob.trail[i];
+        const f=i/vzS.rob.trail.length;
+        vctx.strokeStyle=`rgba(16,185,129,${f*0.45})`; vctx.lineWidth=1.5*f;
+        vctx.beginPath(); vctx.moveTo(a.x,a.y); vctx.lineTo(b.x,b.y); vctx.stroke();
+      }
+    }
+    for (let i=0;i<pts.length-1;i++) {
+      const a=pts[i],b=pts[i+1];
+      const lg=vctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      lg.addColorStop(0,'rgba(79,127,255,0.92)'); lg.addColorStop(1,'rgba(124,92,252,0.88)');
+      vctx.strokeStyle=lg; vctx.lineWidth=Math.max(3,8-i*1.5); vctx.lineCap='round';
+      vctx.beginPath(); vctx.moveTo(a.x,a.y); vctx.lineTo(b.x,b.y); vctx.stroke();
+    }
+    for (let i=0;i<pts.length;i++) {
+      const p=pts[i], isBase=i===0, isEE=i===pts.length-1;
+      const rad=isBase?8:isEE?5:6;
+      vctx.beginPath(); vctx.arc(p.x,p.y,rad,0,Math.PI*2);
+      vctx.fillStyle=isBase?'rgba(107,109,154,0.85)':isEE?'rgba(16,185,129,0.95)':'rgba(79,127,255,0.95)';
+      vctx.fill();
+      vctx.strokeStyle=isEE?'rgba(16,185,129,0.35)':'rgba(79,127,255,0.3)'; vctx.lineWidth=1.5;
+      vctx.beginPath(); vctx.arc(p.x,p.y,rad+4,0,Math.PI*2); vctx.stroke();
+      if (i>0 && i<pts.length-1) {
+        const deg=(angs[i-1]*180/Math.PI).toFixed(1);
+        vctx.fillStyle='rgba(124,159,255,0.7)'; vctx.font='9px "SF Mono",Consolas,monospace';
+        vctx.fillText(`θ${i}: ${deg}°`, p.x+12, p.y-4);
+      }
+    }
+    const pulse=0.5+0.5*Math.sin(ts*0.004);
+    vctx.beginPath(); vctx.arc(ee.x,ee.y,15+pulse*5,0,Math.PI*2);
+    vctx.fillStyle=`rgba(16,185,129,${0.06+pulse*0.08})`; vctx.fill();
+    vctx.fillStyle='rgba(50,55,90,0.55)';
+    vctx.fillRect(bx-24,by,48,8); vctx.fillRect(bx-34,by+8,68,6);
+  }
+
+  /* ── Case 3: CNC Coolant Fluid Dynamics ── */
+  function drawFluid(ts, W, H) {
+    vctx.fillStyle='rgba(107,109,154,0.65)';
+    vctx.font='9px "SF Mono",Consolas,monospace';
+    vctx.fillText('FLOW SIM  ·  Re=4,200  TURBULENT', 14, 13);
+
+    const wpx=W*0.14, wpy=H*0.33, wpw=W*0.55, wph=H*0.3;
+    vctx.fillStyle='rgba(22,28,52,0.9)'; vctx.strokeStyle='rgba(79,127,255,0.2)'; vctx.lineWidth=1.5;
+    vctx.fillRect(wpx,wpy,wpw,wph); vctx.strokeRect(wpx,wpy,wpw,wph);
+    vctx.fillStyle='rgba(107,109,154,0.4)'; vctx.font='9px "SF Mono",Consolas,monospace';
+    vctx.textAlign='center'; vctx.fillText('Ti-6Al-4V',wpx+wpw/2,wpy+wph/2+4); vctx.textAlign='left';
+
+    const tx=wpx+wpw*0.62, ty=wpy-20;
+    vctx.fillStyle='rgba(165,170,205,0.65)'; vctx.fillRect(tx-3.5,ty,7,24);
+    vctx.strokeStyle='rgba(200,210,255,0.2)'; vctx.lineWidth=1; vctx.strokeRect(tx-3.5,ty,7,24);
+
+    // Sparks
+    if (Math.random()<0.07) {
+      for (let s=0;s<3;s++) vzS.flu.pts.push({
+        x:tx+(Math.random()-0.5)*2, y:wpy-1,
+        vx:(Math.random()-0.5)*2.5, vy:-Math.random()*2.2-0.5,
+        life:0.7+Math.random()*0.4, tp:'sp'
+      });
+    }
+
+    // Nozzle
+    const nx=tx+26, ny=wpy-28;
+    vctx.strokeStyle='rgba(14,165,199,0.5)'; vctx.lineWidth=3;
+    vctx.beginPath(); vctx.moveTo(nx+12,ny-16); vctx.lineTo(nx,ny); vctx.stroke();
+    vctx.strokeStyle='rgba(14,165,199,0.18)'; vctx.lineWidth=7;
+    vctx.beginPath(); vctx.moveTo(nx+12,ny-16); vctx.lineTo(nx,ny); vctx.stroke();
+
+    // Emit coolant
+    if (Math.random()<0.5) vzS.flu.pts.push({
+      x:nx+(Math.random()-0.5)*3, y:ny,
+      vx:-0.9+(Math.random()-0.5)*0.5, vy:1.3+Math.random()*0.5,
+      life:1, tp:'cl', sz:1.5+Math.random()*1.5
+    });
+
+    const nxt=[];
+    for (const p of vzS.flu.pts) {
+      if (p.tp==='sp') {
+        p.vy+=0.14;
+      } else {
+        if (p.x>wpx && p.x<wpx+wpw && p.y>wpy && p.y<wpy+wph) {
+          p.y=wpy-1; p.vy=-Math.abs(p.vy)*0.55;
+        }
+        if (p.y<wpy && p.x>wpx-12 && p.x<wpx+wpw+8) {
+          p.vx += (p.x<tx) ? -0.15 : 0.12;
+        }
+      }
+      p.x+=p.vx; p.y+=p.vy;
+      p.life -= p.tp==='sp' ? 0.03 : 0.013;
+      if (p.life>0 && p.x>0 && p.x<W && p.y<H) {
+        if (p.tp==='sp') {
+          vctx.beginPath(); vctx.arc(p.x,p.y,1.5,0,Math.PI*2);
+          vctx.fillStyle=`rgba(255,${180+Math.random()*40|0},40,${p.life*0.9})`; vctx.fill();
+        } else {
+          const sp=Math.sqrt(p.vx*p.vx+p.vy*p.vy);
+          const tf=Math.min(1,sp/2.3);
+          vctx.beginPath(); vctx.arc(p.x,p.y,p.sz*p.life,0,Math.PI*2);
+          vctx.fillStyle=`rgba(${14+tf*65|0},${165-tf*60|0},199,${p.life*0.78})`; vctx.fill();
+        }
+        nxt.push(p);
+      }
+    }
+    vzS.flu.pts=nxt;
+
+    // Heat glow at cut zone
+    const hp=0.04+0.025*Math.sin(ts*0.002);
+    const hg=vctx.createRadialGradient(tx,wpy+4,0,tx,wpy+4,32);
+    hg.addColorStop(0,`rgba(255,120,40,${hp*4})`); hg.addColorStop(1,'rgba(255,80,20,0)');
+    vctx.fillStyle=hg; vctx.fillRect(wpx,wpy,wpw,wph);
+
+    // Flow stats
+    const fv=(8.0+0.35*Math.sin(ts*0.0012)).toFixed(1);
+    const pr=(2.4+0.08*Math.sin(ts*0.0018)).toFixed(2);
+    vctx.fillStyle='rgba(14,165,199,0.7)'; vctx.font='9px "SF Mono",Consolas,monospace';
+    vctx.fillText(`Flow:  ${fv} L/min`, 14, H-24);
+    vctx.fillText(`Press: ${pr} MPa`, 14, H-12);
+  }
+
   function runTerminal() {
-    const { lines, delays } = CASES[caseIdx % CASES.length];
+    const vizCase = caseIdx % CASES.length;
+    const { lines, delays } = CASES[vizCase];
     caseIdx++;
+    startViz(vizCase);
     termBody.innerHTML = '';
     let idx = 0;
     function next() {
